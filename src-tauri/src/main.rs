@@ -22,7 +22,6 @@ fn incoming(app: tauri::AppHandle, raw: String) {
         "home-service://",
         "home-service://open",
         "home-service://open/",
-        "hometunnel://open",
     ]
     .contains(&raw.as_str())
     {
@@ -130,7 +129,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             let mut link = false;
             for arg in args.iter().skip(1) {
-                if arg.starts_with("home-service:") || arg.starts_with("hometunnel:") {
+                if arg.starts_with("home-service:") {
                     incoming(app.clone(), arg.clone());
                     link = true;
                 }
@@ -232,7 +231,7 @@ fn main() {
             let args = std::env::args().collect::<Vec<_>>();
             let mut has_url = false;
             for arg in args.iter().skip(1) {
-                if arg.starts_with("home-service:") || arg.starts_with("hometunnel:") {
+                if arg.starts_with("home-service:") {
                     has_url = true;
                     incoming(app.handle().clone(), arg.clone());
                 }

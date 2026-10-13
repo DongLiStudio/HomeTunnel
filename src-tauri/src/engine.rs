@@ -664,7 +664,7 @@ mod tests {
         )))
     }
     fn request() -> Request {
-        Request::parse("hometunnel://connect?host=example.invalid&user=test&sshPort=22&port=12345&remotePort=80&path=%2Fone").unwrap()
+        Request::parse("home-service://connect?host=example.invalid&user=test&sshPort=22&port=12345&remotePort=80&path=%2Fone").unwrap()
     }
     #[tokio::test]
     async fn new_request_is_ready_without_extra_approval() {

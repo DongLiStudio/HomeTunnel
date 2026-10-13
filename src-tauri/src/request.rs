@@ -22,7 +22,7 @@ impl Request {
             return Err("连接请求过长".into());
         }
         let u = Url::parse(raw).map_err(|_| "连接请求格式无效")?;
-        if !["home-service", "hometunnel"].contains(&u.scheme())
+        if !["home-service"].contains(&u.scheme())
             || u.host_str() != Some("connect")
             || !u.username().is_empty()
             || u.password().is_some()
