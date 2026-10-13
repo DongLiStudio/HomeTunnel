@@ -18,13 +18,7 @@ fn show(app: &tauri::AppHandle) {
     }
 }
 fn incoming(app: tauri::AppHandle, raw: String) {
-    if [
-        "home-service://",
-        "home-service://open",
-        "home-service://open/",
-    ]
-    .contains(&raw.as_str())
-    {
+    if ["hometunnel://", "hometunnel://open", "hometunnel://open/"].contains(&raw.as_str()) {
         show(&app);
         return;
     }
@@ -129,7 +123,7 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             let mut link = false;
             for arg in args.iter().skip(1) {
-                if arg.starts_with("home-service:") {
+                if arg.starts_with("hometunnel:") {
                     incoming(app.clone(), arg.clone());
                     link = true;
                 }
@@ -231,7 +225,7 @@ fn main() {
             let args = std::env::args().collect::<Vec<_>>();
             let mut has_url = false;
             for arg in args.iter().skip(1) {
-                if arg.starts_with("home-service:") {
+                if arg.starts_with("hometunnel:") {
                     has_url = true;
                     incoming(app.handle().clone(), arg.clone());
                 }

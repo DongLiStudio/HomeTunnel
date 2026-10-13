@@ -25,10 +25,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Service links
 
 ```text
-home-service://connect?host=server.example&user=alice&sshPort=22&port=8080&remotePort=8080&name=Private%20service&path=%2F&browser=default
+hometunnel://connect?host=server.example&user=alice&sshPort=22&port=8080&remotePort=8080&name=Private%20service&path=%2F&browser=default
 ```
 
-`home-service` is the only application URL scheme. Complete paths belong to your authenticated portal; there are no local path files. Optional `fingerprint` is the expected SHA256 SSH host public-key fingerprint. Add verified hosts to your own OpenSSH known_hosts before use. HomeTunnel refuses unknown or changed host keys.
+`hometunnel` is the only application URL scheme. Complete paths belong to your authenticated portal; there are no local path files. Optional `fingerprint` is the expected SHA256 SSH host public-key fingerprint. Add verified hosts to your own OpenSSH known_hosts before use. HomeTunnel refuses unknown or changed host keys.
 
 ## Distribution
 

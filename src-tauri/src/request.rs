@@ -22,7 +22,7 @@ impl Request {
             return Err("连接请求过长".into());
         }
         let u = Url::parse(raw).map_err(|_| "连接请求格式无效")?;
-        if !["home-service"].contains(&u.scheme())
+        if !["hometunnel"].contains(&u.scheme())
             || u.host_str() != Some("connect")
             || !u.username().is_empty()
             || u.password().is_some()
@@ -188,7 +188,7 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const LINK: &str="home-service://connect?host=example.invalid&user=test&sshPort=22&port=7979&remotePort=7979&name=Certificates&path=%2Fprivate";
+    const LINK: &str="hometunnel://connect?host=example.invalid&user=test&sshPort=22&port=7979&remotePort=7979&name=Certificates&path=%2Fprivate";
     #[test]
     fn complete_path_and_key() {
         let r = Request::parse(LINK).unwrap();

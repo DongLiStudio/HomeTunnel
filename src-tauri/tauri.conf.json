@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "HomeTunnel",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "identifier": "com.donglistudio.hometunnel",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -60,7 +60,7 @@
     "deep-link": {
       "desktop": {
         "schemes": [
-          "home-service"
+          "hometunnel"
         ]
       }
     }

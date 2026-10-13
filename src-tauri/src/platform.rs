@@ -30,7 +30,7 @@ pub async fn check(app: &tauri::AppHandle, settings: &Settings, repair: bool) ->
     #[cfg(windows)]
     {
         let mut result = Ok("协议指向当前安装".into());
-        for scheme in ["home-service"] {
+        for scheme in ["hometunnel"] {
             let valid = registered_to_self(scheme);
             if !valid && repair {
                 if let Err(e) = app.deep_link().register(scheme) {
@@ -318,7 +318,7 @@ fn mac_default_handlers(identifier: &str, repair: bool) -> Result<(), String> {
             return Err("无法读取应用标识".into());
         }
         let mut ok = true;
-        for name in [c"home-service"] {
+        for name in [c"hometunnel"] {
             let scheme = CFStringCreateWithCString(std::ptr::null(), name.as_ptr(), 0x08000100);
             if scheme.is_null() {
                 ok = false;
