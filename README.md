@@ -2,7 +2,15 @@
 
 An SSH Agent-only desktop tunnel manager for Windows and macOS.
 
-Development is in progress. No stable release is available yet.
+Early releases are available. Publisher signing and notarization are not yet configured.
+
+## Downloads
+
+- [Windows x64 installer](https://github.com/DongLiStudio/HomeTunnel/releases/latest/download/HomeTunnel-Windows-setup.exe)
+- [macOS Apple Silicon DMG](https://github.com/DongLiStudio/HomeTunnel/releases/latest/download/HomeTunnel-Mac.dmg)
+- [Release notes and checksums](https://github.com/DongLiStudio/HomeTunnel/releases/latest)
+
+Release assets retain these two stable filenames for portal links; versioned filenames identify a specific build. Verify the SHA256SUMS file included in each release. Windows installers are unsigned; macOS builds are ad-hoc signed and not notarized.
 
 ## Boundaries
 
