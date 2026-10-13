@@ -8,7 +8,7 @@ Development is in progress. No stable release is available yet.
 
 HomeTunnel accepts structured service links, forwards only to a remote loopback address, waits for the web service, and opens it in the source browser. It does not accept terminal commands, store passwords, export private keys, or bypass host-key verification. Authentication stays with your SSH Agent. An Agent may still require confirmation for every signature.
 
-Both platforms share per-connection open / renew / disconnect, disconnect all, expiry, duplicate-request reuse, direct-local detection, background operation, login startup preferences and installation diagnostics. First-time target routes require local approval before connecting.
+Both platforms share per-connection open / renew / disconnect, disconnect all, expiry, duplicate-request reuse, direct-local detection, background operation, login startup preferences and installation diagnostics.
 
 ## Build
 

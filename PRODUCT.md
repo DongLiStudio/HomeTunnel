@@ -14,7 +14,7 @@ People who use private web services through SSH and value clear security boundar
 Open a private service from a portal, reuse or establish an Agent-authenticated loopback SSH tunnel, and return to the source browser without opening the manager window.
 
 ## Capabilities and Constraints
-Agent/public-key authentication only, no password login, saved password, exported private keys, arbitrary commands, local service catalogue, or private path files. Portal links supply complete structured connection parameters. Both platforms offer per-connection open/renew/disconnect, disconnect all, configurable TTL, local-host detection, deduplication, startup checks, explicit trust for first-time targets, tray/menu-bar background execution, installation and clean uninstallation.
+Agent/public-key authentication only, no password login, saved password, exported private keys, arbitrary commands, local service catalogue, or private path files. Portal links supply complete structured connection parameters. Both platforms offer per-connection open/renew/disconnect, disconnect all, configurable TTL, local-host detection, deduplication, startup checks, tray/menu-bar background execution, installation and clean uninstallation.
 
 ## Brand Commitments
 Product name HomeTunnel / 家庭隧道, publisher DongLiStudio. A clear, refined system interface; real Apple Liquid Glass where supported, native Windows material. One function set, platform-appropriate system conventions.

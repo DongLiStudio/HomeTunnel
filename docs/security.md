@@ -10,9 +10,9 @@ and confirmation remain the SSH Agent's responsibility.
 
 ## Link boundary
 
-A native deep link is not proof that a trustworthy website sent it. The first
-request for a target/user/SSH port/forward mapping requires approval in the
-manager. The URL supplies typed fields, not shell strings. The destination
+A native deep link is not proof that a trustworthy website sent it. Requests
+are handled without an extra manager approval. The URL supplies typed fields,
+not shell strings. SSH Agent signing and OpenSSH host verification remain mandatory. The destination
 forward is always remote 127.0.0.1 and the listener is local 127.0.0.1.
 Complete page paths stay in memory with the connection; no service catalogue
 or local secret path files are maintained. Diagnostics exclude complete URLs.

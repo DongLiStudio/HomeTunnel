@@ -144,8 +144,8 @@ async fn mac_registration(app: &tauri::AppHandle, repair: bool) -> Result<String
             return Err("Launch Services注册失败".into());
         }
     }
-    let _ = app;
-    Ok("应用Bundle包含协议声明，Launch Services已检查".into())
+    mac_default_handlers(&app.config().identifier, repair)?;
+    Ok("协议已指向当前安装".into())
 }
 pub fn material(window: &tauri::WebviewWindow) {
     #[cfg(windows)]
@@ -264,6 +264,56 @@ impl Drop for OwnedJob {
     fn drop(&mut self) {
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0 as *mut _);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_default_handlers(identifier: &str, repair: bool) -> Result<(), String> {
+    use std::ffi::{c_char, c_void, CString};
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFStringCreateWithCString(a: *const c_void, s: *const c_char, e: u32) -> *const c_void;
+        fn CFEqual(a: *const c_void, b: *const c_void) -> u8;
+        fn CFRelease(a: *const c_void);
+    }
+    #[link(name = "CoreServices", kind = "framework")]
+    extern "C" {
+        fn LSCopyDefaultHandlerForURLScheme(s: *const c_void) -> *const c_void;
+        fn LSSetDefaultHandlerForURLScheme(s: *const c_void, b: *const c_void) -> i32;
+    }
+    let bundle = CString::new(identifier).map_err(|e| e.to_string())?;
+    unsafe {
+        let expected = CFStringCreateWithCString(std::ptr::null(), bundle.as_ptr(), 0x08000100);
+        if expected.is_null() {
+            return Err("无法读取应用标识".into());
+        }
+        let mut ok = true;
+        for name in [c"home-service", c"hometunnel"] {
+            let scheme = CFStringCreateWithCString(std::ptr::null(), name.as_ptr(), 0x08000100);
+            if scheme.is_null() {
+                ok = false;
+                continue;
+            }
+            if repair && LSSetDefaultHandlerForURLScheme(scheme, expected) != 0 {
+                ok = false;
+            }
+            let actual = LSCopyDefaultHandlerForURLScheme(scheme);
+            if actual.is_null() {
+                ok = false;
+            } else {
+                if CFEqual(actual, expected) == 0 {
+                    ok = false;
+                }
+                CFRelease(actual);
+            }
+            CFRelease(scheme);
+        }
+        CFRelease(expected);
+        if ok {
+            Ok(())
+        } else {
+            Err("默认协议处理程序未指向此应用，请重新安装或修复登记".into())
         }
     }
 }

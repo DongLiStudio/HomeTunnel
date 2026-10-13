@@ -21,7 +21,6 @@ pub struct Settings {
     pub minutes: u32,
     pub autostart: bool,
     pub theme: String,
-    pub trusted_routes: Vec<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -29,7 +28,6 @@ impl Default for Settings {
             minutes: 30,
             autostart: true,
             theme: "system".into(),
-            trusted_routes: vec![],
         }
     }
 }
@@ -126,14 +124,13 @@ impl Engine {
     pub async fn settings(&self) -> Settings {
         self.data.lock().await.settings.clone()
     }
-    pub async fn save_settings(&self, mut value: Settings) -> Result<(), String> {
+    pub async fn save_settings(&self, value: Settings) -> Result<(), String> {
         if !(1..=240).contains(&value.minutes)
             || !["system", "light", "dark"].contains(&value.theme.as_str())
         {
             return Err("设置值无效".into());
         }
         let mut d = self.data.lock().await;
-        value.trusted_routes = d.settings.trusted_routes.clone();
         self.persist(&value)?;
         d.settings = value;
         Ok(())
@@ -183,25 +180,29 @@ impl Engine {
             })
             .collect()
     }
-    pub async fn submit(&self, request: Request) -> bool {
+    pub async fn submit(&self, request: Request) -> Result<(), String> {
+        if let Some((id, generation)) = self.enqueue(request).await? {
+            self.start(id, generation);
+        }
+        Ok(())
+    }
+    async fn enqueue(&self, request: Request) -> Result<Option<(String, u64)>, String> {
         let id = request.key();
         let mut d = self.data.lock().await;
         let ttl = Duration::from_secs(d.settings.minutes as u64 * 60);
         if let Some(c) = d.connections.get_mut(&id) {
             if c.request.fingerprint != request.fingerprint {
-                c.view.error = "同一路由的主机指纹发生变化；先断开并核实身份".into();
-                return false;
+                return Err("同一路由的主机指纹发生变化；先断开并核实身份".into());
             }
             c.request = request.clone();
             c.expires = Instant::now() + ttl;
             c.opened = false;
-            if !["failed", "awaitingTrust"].contains(&c.view.status.as_str()) {
-                return false;
+            if c.view.status != "failed" {
+                return Ok(None);
             }
         }
         d.generation += 1;
         let generation = d.generation;
-        let trusted = d.settings.trusted_routes.contains(&id);
         let view = View {
             id: id.clone(),
             name: request.name.clone(),
@@ -209,12 +210,7 @@ impl Engine {
             user: request.user.clone(),
             port: request.port,
             remote_port: request.remote_port,
-            status: if trusted {
-                "connecting"
-            } else {
-                "awaitingTrust"
-            }
-            .into(),
+            status: "connecting".into(),
             error: String::new(),
             remaining: ttl.as_secs(),
             pid: None,
@@ -233,34 +229,7 @@ impl Engine {
             },
         );
         drop(d);
-        if trusted {
-            self.start(id, generation);
-        }
-        !trusted
-    }
-    pub async fn approve(&self, id: String) -> Result<(), String> {
-        let mut d = self.data.lock().await;
-        if !d.connections.contains_key(&id) {
-            return Err("连接已不存在".into());
-        }
-        if !d.settings.trusted_routes.contains(&id) {
-            d.settings.trusted_routes.push(id.clone());
-            self.persist(&d.settings)?;
-        }
-        let c = d.connections.get_mut(&id).unwrap();
-        if c.view.status != "awaitingTrust" {
-            return Ok(());
-        }
-        c.view.status = "connecting".into();
-        let generation = c.generation;
-        drop(d);
-        self.start(id, generation);
-        Ok(())
-    }
-    pub async fn clear_trust(&self) -> Result<(), String> {
-        let mut d = self.data.lock().await;
-        d.settings.trusted_routes.clear();
-        self.persist(&d.settings)
+        Ok(Some((id, generation)))
     }
     pub async fn disconnect(&self, id: &str) {
         let removed = self.data.lock().await.connections.remove(id);
@@ -655,22 +624,22 @@ mod tests {
         Request::parse("hometunnel://connect?host=example.invalid&user=test&sshPort=22&port=12345&remotePort=80&path=%2Fone").unwrap()
     }
     #[tokio::test]
-    async fn untrusted_does_not_spawn() {
+    async fn new_request_is_ready_without_extra_approval() {
         let e = engine();
-        assert!(e.submit(request()).await);
+        assert!(e.enqueue(request()).await.unwrap().is_some());
         let rows = e.snapshot().await;
-        assert_eq!(rows[0].status, "awaitingTrust");
+        assert_eq!(rows[0].status, "connecting");
         assert_eq!(rows[0].pid, None);
         e.disconnect_all().await;
         assert!(e.snapshot().await.is_empty());
     }
     #[tokio::test]
-    async fn duplicate_pending_is_one_row() {
+    async fn duplicate_request_reuses_one_record() {
         let e = engine();
-        e.submit(request()).await;
+        e.enqueue(request()).await.unwrap();
         let mut r = request();
         r.path = "/two".into();
-        e.submit(r).await;
+        e.enqueue(r).await.unwrap();
         assert_eq!(e.snapshot().await.len(), 1);
         let d = e.data.lock().await;
         assert_eq!(d.connections.values().next().unwrap().request.path, "/two");
@@ -680,7 +649,7 @@ mod tests {
         let e = engine();
         let r = request();
         let id = r.key();
-        e.submit(r).await;
+        e.enqueue(r).await.unwrap();
         assert!(e.renew(&id).await.is_ok());
         e.disconnect(&id).await;
         assert!(e.snapshot().await.is_empty());

@@ -33,8 +33,8 @@ fn incoming(app: tauri::AppHandle, raw: String) {
     tauri::async_runtime::spawn(async move {
         match request::Request::parse(&raw) {
             Ok(r) => {
-                if engine.submit(r).await {
-                    show(&app);
+                if let Err(error) = engine.submit(r).await {
+                    engine.notice(error).await;
                 }
             }
             Err(e) => {
@@ -75,14 +75,6 @@ async fn open_page(engine: tauri::State<'_, Engine>, id: String) -> Result<(), S
     engine.open(&id).await
 }
 #[tauri::command]
-async fn approve(engine: tauri::State<'_, Engine>, id: String) -> Result<(), String> {
-    engine.approve(id).await
-}
-#[tauri::command]
-async fn clear_trust(engine: tauri::State<'_, Engine>) -> Result<(), String> {
-    engine.clear_trust().await
-}
-#[tauri::command]
 async fn update_settings(
     app: tauri::AppHandle,
     engine: tauri::State<'_, Engine>,
@@ -97,7 +89,18 @@ async fn update_settings(
         }
         .map_err(|e| e.to_string())?;
     }
-    engine.save_settings(settings).await
+    if let Err(error) = engine.save_settings(settings).await {
+        let rollback = if previous.autostart {
+            app.autolaunch().enable()
+        } else {
+            app.autolaunch().disable()
+        };
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(e) => format!("{error}；恢复自启偏好失败：{e}"),
+        });
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn diagnostics(
@@ -141,8 +144,6 @@ fn main() {
             disconnect_all,
             renew,
             open_page,
-            approve,
-            clear_trust,
             update_settings,
             diagnostics,
             repair
