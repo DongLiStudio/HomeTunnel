@@ -173,6 +173,7 @@ pub fn material(window: &tauri::WebviewWindow) {
     }
     #[cfg(target_os = "macos")]
     unsafe {
+        let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
         use objc2::{
             class, msg_send,
             runtime::{AnyClass, AnyObject},
@@ -193,7 +194,16 @@ pub fn material(window: &tauri::WebviewWindow) {
                 let _: () = msg_send![&*glass,setMaterial:12isize];
                 let _: () = msg_send![&*glass,setState:1isize];
             }
-            let _: () = msg_send![&*content,addSubview:glass positioned:-1isize relativeTo:std::ptr::null::<AnyObject>()];
+            if glass_class.is_some() {
+                // Host the real content in the glass; a separate background sibling does not integrate it.
+                let _: () = msg_send![&*content, retain];
+                let _: () = msg_send![&*glass,setCornerRadius:18.0f64];
+                let _: () = msg_send![&*glass,setContentView:content];
+                let _: () = msg_send![win,setContentView:glass];
+                let _: () = msg_send![&*content, release];
+            } else {
+                let _: () = msg_send![&*content,addSubview:glass positioned:-1isize relativeTo:std::ptr::null::<AnyObject>()];
+            }
             let _: () = msg_send![win,setOpaque:false];
             let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
             let _: () = msg_send![win,setBackgroundColor:clear];
@@ -375,5 +385,41 @@ fn startup_points_here(app: &tauri::AppHandle) -> bool {
     {
         let _ = (app, exe);
         true
+    }
+}
+
+pub fn tray_image<'a>(default: tauri::image::Image<'a>) -> tauri::image::Image<'a> {
+    #[cfg(target_os = "macos")]
+    {
+        let size = 44usize;
+        let mut rgba = vec![0u8; size * size * 4];
+        for y in 0..size {
+            for x in 0..size {
+                let mut coverage = 0u32;
+                for sy in 0..4 {
+                    for sx in 0..4 {
+                        let px = (x as f64 + (sx as f64 + 0.5) / 4.0) / 2.0 - 11.0;
+                        let py = (y as f64 + (sy as f64 + 0.5) / 4.0) / 2.0 - 11.0;
+                        let u = (px - py) * std::f64::consts::FRAC_1_SQRT_2;
+                        let v = (px + py) * std::f64::consts::FRAC_1_SQRT_2;
+                        let outline = [-3.0, 3.0].iter().any(|center| {
+                            let dx = (u - center).abs() - 2.5;
+                            let distance = (dx.max(0.0).powi(2) + v.powi(2)).sqrt();
+                            (distance - 3.0).abs() < 0.85
+                        });
+                        if outline {
+                            coverage += 1;
+                        }
+                    }
+                }
+                rgba[(y * size + x) * 4 + 3] = (coverage * 255 / 16) as u8;
+            }
+        }
+        let _ = default;
+        tauri::image::Image::new_owned(rgba, size as u32, size as u32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        default
     }
 }

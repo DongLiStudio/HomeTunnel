@@ -89,6 +89,11 @@ async fn update_settings(
         }
         .map_err(|e| e.to_string())?;
     }
+    let theme = match settings.theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    };
     if let Err(error) = engine.save_settings(settings).await {
         let rollback = if previous.autostart {
             app.autolaunch().enable()
@@ -99,6 +104,9 @@ async fn update_settings(
             Ok(()) => error,
             Err(e) => format!("{error}；恢复自启偏好失败：{e}"),
         });
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_theme(theme);
     }
     Ok(())
 }
@@ -167,7 +175,10 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "退出 HomeTunnel", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &all, &quit])?;
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(platform::tray_image(
+                    app.default_window_icon().unwrap().clone(),
+                ))
+                .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("家庭隧道 · HomeTunnel")
                 .menu(&menu)
                 .show_menu_on_left_click(false)

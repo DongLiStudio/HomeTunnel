@@ -1,11 +1,7 @@
 # HomeTunnel interface
 
-Operate mode. The user opens a compact utility on demand to understand active connections and perform one precise action, usually while a browser is their primary task.
+macOS is the visual reference. The utility uses system typography, compact connection rows and an integrated transparent titlebar. Native NSGlassEffectView hosts the actual content on supported macOS; older systems use AppKit vibrancy. The web layer exposes native material with a transparent navigation rail and a partially transparent reading surface, rather than covering it in opaque blue-gray paint. Windows follows the same layout and control language on native Mica.
 
-One window: a narrow translucent system sidebar (connections, diagnostics, settings), a clear content surface, and a compact header carrying the global action. Connections are scan-friendly rows, not a dashboard of cards. Name and status are primary, route and remaining lifetime secondary. Each row exposes open/renew/disconnect; global disconnect is always accessible. No hero counters or decorative graphs.
+Navigation stays fixed independently of the scrolling reading area. Selected navigation uses a clear rounded surface; secondary controls use compact glass-like capsules and primary actions retain a single blue accent. No icon tiles, dashboard counters or decorative charts. The Mac menu-bar icon is a transparent monochrome template, recolored by the system. Application icons remain separate from status-item icons.
 
-System sans typography, SF on Mac and Segoe UI on Windows, tabular time values, crisp original line icons, neutral surfaces with blue action and semantic status colors. Default follows system appearance. Material belongs in the sidebar/toolbar; the reading surface stays legible. Mac native Liquid Glass is a platform adapter, not a CSS claim. Windows uses native window effects. Keyboard focus, reduced motion, contrast and empty/error states are first-class.
-
-Native controls adapt to each OS while labels, information hierarchy, lifecycle and available actions remain identical.
-
-User explicitly chose code-first implementation with actual-device inspection on 2026-10-13.
+Functionality is identical on both platforms: connect, open, renew, disconnect one/all, diagnostics, independent event logs and immediate settings. System appearance, readable contrast, keyboard focus, reduced motion and transparency preferences remain part of the implementation. User performs installed desktop visual acceptance.
