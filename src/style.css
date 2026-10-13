@@ -17,3 +17,5 @@
 .number-control input:focus-visible{outline:0}
 .number-control:focus-within{box-shadow:0 0 0 1px var(--focus)}
 .switch input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+
+.window-title{position:fixed;left:50%;top:7px;transform:translateX(-50%);font-size:12px;font-weight:600;line-height:16px;color:var(--ink);user-select:none;-webkit-user-select:none}

@@ -182,6 +182,7 @@ pub fn material(window: &tauri::WebviewWindow) {
         // NSGlassEffectView is runtime-checked; older systems use native vibrancy.
         if let Ok(ptr) = window.ns_window() {
             let win = &*(ptr as *const AnyObject);
+            let _: () = msg_send![win,setTitleVisibility:1isize];
             let content: *mut AnyObject = msg_send![win, contentView];
             let bounds: NSRect = msg_send![&*content, bounds];
             let glass_class = AnyClass::get(c"NSGlassEffectView");
