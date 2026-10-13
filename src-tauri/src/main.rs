@@ -150,6 +150,11 @@ fn main() {
             repair
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_dock_visibility(false);
+            }
             let engine = Engine::new(app.path().app_config_dir()?.join("settings.json"));
             app.manage(engine.clone());
             let window = app.get_webview_window("main").unwrap();
@@ -158,6 +163,11 @@ fn main() {
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                        let _ = handle.set_dock_visibility(false);
+                    }
                     if let Some(w) = handle.get_webview_window("main") {
                         let _ = w.hide();
                     }
