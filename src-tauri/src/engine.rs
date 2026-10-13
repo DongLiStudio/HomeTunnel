@@ -65,6 +65,7 @@ struct Data {
     connections: BTreeMap<String, Connection>,
     notices: Vec<Notice>,
     generation: u64,
+    local_hosts: BTreeMap<String, (Instant, bool)>,
 }
 #[derive(Clone)]
 pub struct Engine {
@@ -117,6 +118,7 @@ impl Engine {
                 connections: BTreeMap::new(),
                 notices: vec![],
                 generation: 0,
+                local_hosts: BTreeMap::new(),
             })),
             config,
         }
@@ -181,7 +183,9 @@ impl Engine {
             .collect()
     }
     pub async fn submit(&self, request: Request) -> Result<(), String> {
+        let name = request.name.clone();
         if let Some((id, generation)) = self.enqueue(request).await? {
+            self.notice(format!("{name}：开始连接")).await;
             self.start(id, generation);
         }
         Ok(())
@@ -285,6 +289,7 @@ impl Engine {
         });
     }
     async fn connect(&self, id: String, generation: u64) {
+        let connect_started = Instant::now();
         let request = {
             let d = self.data.lock().await;
             match d.connections.get(&id) {
@@ -292,7 +297,30 @@ impl Engine {
                 _ => return,
             }
         };
-        let direct = is_this_machine(&request).await;
+        let host_key = format!(
+            "{}:{}:{:?}",
+            request.host, request.ssh_port, request.fingerprint
+        );
+        let cached = self
+            .data
+            .lock()
+            .await
+            .local_hosts
+            .get(&host_key)
+            .copied()
+            .filter(|(time, _)| time.elapsed() < Duration::from_secs(30));
+        let direct = match cached {
+            Some((_, local)) => local,
+            None => {
+                let local = is_this_machine(&request).await;
+                let mut data = self.data.lock().await;
+                if data.local_hosts.len() >= 128 {
+                    data.local_hosts.clear();
+                }
+                data.local_hosts.insert(host_key, (Instant::now(), local));
+                local
+            }
+        };
         if direct {
             if !ready(&request.page_url(true)).await {
                 self.fail(
@@ -304,14 +332,8 @@ impl Engine {
                 return;
             }
         } else {
-            if let Err(e) = agent_available().await {
-                self.fail(&id, generation, e).await;
-                return;
-            }
-            if tokio::net::TcpStream::connect(("127.0.0.1", request.port))
-                .await
-                .is_ok()
-            {
+            // Binding an unused loopback port is immediate; a refused TCP connect can be slow on Windows.
+            if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, request.port)).is_err() {
                 self.fail(
                     &id,
                     generation,
@@ -387,7 +409,7 @@ impl Engine {
                 }
             }
         }
-        let started = Instant::now();
+        let started = connect_started;
         loop {
             let mut d = self.data.lock().await;
             let Some(c) = d.connections.get_mut(&id) else {
@@ -421,6 +443,7 @@ impl Engine {
             if c.generation != generation {
                 return;
             }
+            let mut ready_notice = None;
             if responded {
                 c.view.status = if direct { "local" } else { "connected" }.into();
                 if !c.opened {
@@ -428,6 +451,12 @@ impl Engine {
                         Ok(()) => {
                             c.opened = true;
                             c.view.error.clear();
+                            ready_notice = Some(format!(
+                                "{}：{}已就绪（{} ms）",
+                                c.view.name,
+                                if direct { "本机网页" } else { "隧道" },
+                                started.elapsed().as_millis()
+                            ));
                         }
                         Err(e) => c.view.error = e,
                     }
@@ -441,7 +470,15 @@ impl Engine {
                 return;
             }
             drop(d);
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            if let Some(notice) = ready_notice {
+                self.notice(notice).await;
+            }
+            tokio::time::sleep(if needs_open {
+                Duration::from_millis(150)
+            } else {
+                Duration::from_secs(1)
+            })
+            .await;
         }
     }
 }
@@ -480,19 +517,6 @@ async fn ready(page: &str) -> bool {
     }
 }
 async fn is_this_machine(r: &Request) -> bool {
-    let local = if_addrs::get_if_addrs()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|i| i.ip())
-        .collect::<Vec<_>>();
-    if let Ok(addrs) = tokio::net::lookup_host((r.host.as_str(), r.ssh_port)).await {
-        if addrs
-            .into_iter()
-            .any(|a| a.ip().is_loopback() || local.contains(&a.ip()))
-        {
-            return true;
-        }
-    }
     if let Some(expected) = &r.fingerprint {
         #[cfg(windows)]
         let key = PathBuf::from(
@@ -505,6 +529,24 @@ async fn is_this_machine(r: &Request) -> bool {
             if let Some(f) = fingerprint(&text) {
                 return &f == expected;
             }
+        }
+    }
+    let local = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.ip())
+        .collect::<Vec<_>>();
+    if let Ok(Ok(addrs)) = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::net::lookup_host((r.host.as_str(), r.ssh_port)),
+    )
+    .await
+    {
+        if addrs
+            .into_iter()
+            .any(|a| a.ip().is_loopback() || local.contains(&a.ip()))
+        {
+            return true;
         }
     }
     false
@@ -546,7 +588,7 @@ fn explain_ssh(line: &str) -> String {
     if line.contains("agent refused") || line.contains("sign_and_send_pubkey") {
         "Agent 拒绝签名；请解锁并允许本次请求".into()
     } else if line.contains("Permission denied") {
-        "公钥认证失败；请检查 Agent 中的身份及服务端公钥授权".into()
+        "公钥认证失败；请启用或解锁 SSH Agent，检查其中身份及服务端公钥授权".into()
     } else if line.contains("Host key verification failed")
         || line.contains("REMOTE HOST IDENTIFICATION")
     {
