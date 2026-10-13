@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HomeTunnel",
+  "version": "0.1.0",
+  "identifier": "com.donglistudio.hometunnel",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "家庭隧道",
+        "width": 980,
+        "height": 680,
+        "minWidth": 740,
+        "minHeight": 500,
+        "visible": false,
+        "transparent": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "dmg"
+    ],
+    "shortDescription": "后台运行的 SSH Agent 隧道管理器",
+    "category": "DeveloperTool",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "infoPlist": "Info.plist"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "home-service",
+          "hometunnel"
+        ]
+      }
+    }
+  }
+}

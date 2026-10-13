@@ -1,0 +1,39 @@
+[package]
+name = "home-tunnel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Agent-only SSH tunnel manager for Windows and macOS"
+repository = "https://github.com/DongLiStudio/HomeTunnel"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+tokio = { version = "1", features = ["process", "sync", "time", "net", "io-util", "rt", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+if-addrs = "0.13"
+dirs = "6"
+base64 = "0.22"
+sha2 = "0.10"
+open = "5"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
