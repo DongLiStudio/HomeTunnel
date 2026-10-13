@@ -88,7 +88,8 @@ pub fn command(program: &str) -> Command {
     #[cfg(target_os = "macos")]
     {
         // GUI apps do not inherit the interactive shell's Agent socket.
-        if std::env::var_os("SSH_AUTH_SOCK").is_none() {
+        let socket = std::env::var("SSH_AUTH_SOCK").unwrap_or_default();
+        if socket.is_empty() || socket.contains("com.apple.launchd") {
             if let Some(home) = dirs::home_dir() {
                 for socket in [
                     home.join(

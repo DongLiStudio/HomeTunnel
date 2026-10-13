@@ -54,26 +54,44 @@ pub async fn check(app: &tauri::AppHandle, settings: &Settings, repair: bool) ->
     #[cfg(not(any(windows, target_os = "macos")))]
     checks.push(item("应用协议", Ok("此构建未作为正式发行平台".into())));
     let actual = app.autolaunch().is_enabled().map_err(|e| e.to_string());
-    let result = match actual {
-        Ok(value) if value == settings.autostart => Ok(if value {
-            "已按设置启用"
-        } else {
-            "已按设置关闭"
-        }
-        .into()),
-        Ok(_) if repair => {
-            let r = if settings.autostart {
-                app.autolaunch().enable()
-            } else {
-                app.autolaunch().disable()
-            };
-            r.map(|_| "已修复为保存的偏好".into())
+    if matches!(actual, Ok(true)) && settings.autostart && !startup_points_here(app) {
+        let result = if repair {
+            app.autolaunch()
+                .enable()
                 .map_err(|e| e.to_string())
-        }
-        Ok(_) => Err("与保存偏好不一致".into()),
-        Err(e) => Err(e),
-    };
-    checks.push(item("登录自启", result));
+                .and_then(|_| {
+                    if startup_points_here(app) {
+                        Ok("已修复为当前安装路径".into())
+                    } else {
+                        Err("自启路径修复后仍不一致".into())
+                    }
+                })
+        } else {
+            Err("自启仍指向其他安装路径".into())
+        };
+        checks.push(item("登录自启", result));
+    } else {
+        let result = match actual {
+            Ok(value) if value == settings.autostart => Ok(if value {
+                "已按设置启用"
+            } else {
+                "已按设置关闭"
+            }
+            .into()),
+            Ok(_) if repair => {
+                let r = if settings.autostart {
+                    app.autolaunch().enable()
+                } else {
+                    app.autolaunch().disable()
+                };
+                r.map(|_| "已修复为保存的偏好".into())
+                    .map_err(|e| e.to_string())
+            }
+            Ok(_) => Err("与保存偏好不一致".into()),
+            Err(e) => Err(e),
+        };
+        checks.push(item("登录自启", result));
+    }
     let ssh = engine::command("ssh").arg("-V").output().await;
     checks.push(item(
         "OpenSSH",
@@ -315,5 +333,47 @@ fn mac_default_handlers(identifier: &str, repair: bool) -> Result<(), String> {
         } else {
             Err("默认协议处理程序未指向此应用，请重新安装或修复登记".into())
         }
+    }
+}
+
+fn startup_points_here(app: &tauri::AppHandle) -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        let value = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .and_then(|key| key.get_value::<String, _>(&app.package_info().name));
+        let path = exe.to_string_lossy();
+        value
+            .map(|value| {
+                value.eq_ignore_ascii_case(&format!("\"{path}\" --background"))
+                    || value.eq_ignore_ascii_case(&format!("{path} --background"))
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let Some(home) = dirs::home_dir() else {
+            return false;
+        };
+        let text = std::fs::read_to_string(
+            home.join("Library/LaunchAgents")
+                .join(format!("{}.plist", app.package_info().name)),
+        )
+        .unwrap_or_default();
+        let path = exe
+            .to_string_lossy()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        text.contains(&path) && text.contains("--background")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (app, exe);
+        true
     }
 }
