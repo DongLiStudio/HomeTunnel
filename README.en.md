@@ -153,3 +153,15 @@ Report security vulnerabilities privately to the maintainer, using GitHub privat
 ## License
 
 [MIT](LICENSE) · Copyright © 2026 DongLiStudio
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/#DongLiStudio/HomeTunnel&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=DongLiStudio/HomeTunnel&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=DongLiStudio/HomeTunnel&type=Date">
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=DongLiStudio/HomeTunnel&type=Date" width="800">
+    </picture>
+  </a>
+</p>
