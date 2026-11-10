@@ -9,6 +9,7 @@ pub struct Request {
     pub user: String,
     pub ssh_port: u16,
     pub port: u16,
+    pub fixed_port: bool,
     pub remote_port: u16,
     pub name: String,
     pub path: String,
@@ -39,6 +40,7 @@ impl Request {
                 "user",
                 "sshPort",
                 "port",
+                "fixedPort",
                 "remotePort",
                 "name",
                 "path",
@@ -104,6 +106,11 @@ impl Request {
             return Err("来源浏览器无效".into());
         }
         let fingerprint = q.get("fingerprint").cloned();
+        let fixed_port = match q.get("fixedPort").map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => return Err("fixedPort 必须为 true 或 false".into()),
+        };
         if let Some(f) = &fingerprint {
             if !f.starts_with("SHA256:")
                 || f.len() != 50
@@ -119,6 +126,7 @@ impl Request {
             user,
             ssh_port: port("sshPort")?,
             port: port("port")?,
+            fixed_port,
             remote_port: port("remotePort")?,
             name,
             path,
@@ -126,15 +134,20 @@ impl Request {
             browser,
         })
     }
-    // The listening port is an owned resource; paths do not create another SSH process.
+    // Auto ports belong to the connection, not its identity. Reopening the
+    // original portal link must find a tunnel that already chose another port.
     pub fn key(&self) -> String {
         format!(
             "{}@{}:{}/{}:{}",
             self.user,
             self.host.to_ascii_lowercase(),
             self.ssh_port,
-            self.port,
-            self.remote_port
+            self.remote_port,
+            if self.fixed_port {
+                format!("fixed-{}", self.port)
+            } else {
+                "auto".into()
+            }
         )
     }
     pub fn page_url(&self, direct: bool) -> String {
@@ -164,6 +177,8 @@ impl Request {
             "ForwardAgent=no",
             "-o",
             "ExitOnForwardFailure=yes",
+            "-o",
+            "LogLevel=DEBUG1",
             "-o",
             "ServerAliveInterval=15",
             "-o",
@@ -199,6 +214,23 @@ mod tests {
                 .unwrap()
                 .key()
         );
+    }
+    #[test]
+    fn different_preferred_ports_reuse_the_same_auto_target() {
+        let a = Request::parse(LINK).unwrap();
+        let b = Request::parse(&LINK.replace("port=7979", "port=8989")).unwrap();
+        assert_eq!(a.key(), b.key());
+        let different =
+            Request::parse(&LINK.replace("remotePort=7979", "remotePort=8989")).unwrap();
+        assert_ne!(a.key(), different.key());
+    }
+    #[test]
+    fn fixed_port_is_an_explicit_validated_opt_in() {
+        assert!(!Request::parse(LINK).unwrap().fixed_port);
+        let fixed = Request::parse(&format!("{LINK}&fixedPort=true")).unwrap();
+        assert!(fixed.fixed_port);
+        assert_ne!(fixed.key(), Request::parse(LINK).unwrap().key());
+        assert!(Request::parse(&format!("{LINK}&fixedPort=maybe")).is_err());
     }
     #[test]
     fn excludes_password_command_and_legacy() {

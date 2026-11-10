@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    net::{Ipv4Addr, TcpListener},
     path::PathBuf,
     process::Stdio,
     sync::Arc,
@@ -59,6 +60,8 @@ struct Connection {
     expires: Instant,
     generation: u64,
     opened: bool,
+    forward_ready: bool,
+    port_conflict: bool,
 }
 struct Data {
     settings: Settings,
@@ -200,6 +203,7 @@ impl Engine {
                 return Err("同一路由的主机指纹发生变化；先断开并核实身份".into());
             }
             c.request = request.clone();
+            c.view.name = request.name.clone();
             c.expires = Instant::now() + ttl;
             c.opened = false;
             if c.view.status != "failed" {
@@ -231,6 +235,8 @@ impl Engine {
                 expires: Instant::now() + ttl,
                 generation,
                 opened: false,
+                forward_ready: false,
+                port_conflict: false,
             },
         );
         drop(d);
@@ -272,7 +278,7 @@ impl Engine {
         if !["connected", "local"].contains(&c.view.status.as_str()) {
             return Err("连接尚未就绪".into());
         }
-        open_browser(&c.request, c.view.status == "local")
+        open_browser(&c.effective_request(), c.view.status == "local")
     }
     async fn fail(&self, id: &str, generation: u64, message: String) {
         let mut d = self.data.lock().await;
@@ -288,6 +294,109 @@ impl Engine {
         tauri::async_runtime::spawn(async move {
             engine.connect(id, generation).await;
         });
+    }
+    async fn launch_tunnel(
+        &self,
+        id: &str,
+        generation: u64,
+        request: &Request,
+        retry: bool,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>, String> {
+        // Keep the OS reservation alive until immediately before SSH starts.
+        // In-flight connections also reserve their chosen port in our state.
+        let listener = {
+            let mut d = self.data.lock().await;
+            if !matches!(d.connections.get(id), Some(c) if c.generation == generation) {
+                return Ok(None);
+            }
+            let reserved = d
+                .connections
+                .iter()
+                .filter(|(key, c)| key.as_str() != id && c.view.status != "failed")
+                .map(|(_, c)| c.view.port)
+                .collect::<Vec<_>>();
+            let listener = local_listener(
+                if retry { 0 } else { request.port },
+                request.fixed_port,
+                &reserved,
+            )?;
+            let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+            let c = d.connections.get_mut(id).unwrap();
+            c.view.port = port;
+            c.view.error.clear();
+            c.forward_ready = false;
+            c.port_conflict = false;
+            listener
+        };
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        if port != request.port {
+            self.notice(format!(
+                "{}：本机端口 {} 不可用，已自动选择 {}",
+                request.name, request.port, port
+            ))
+            .await;
+        }
+        let mut effective = request.clone();
+        effective.port = port;
+        let mut cmd = command("ssh");
+        cmd.args(effective.ssh_args())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        drop(listener);
+        let mut child = cmd
+            .spawn()
+            .map_err(|_| "无法启动系统 OpenSSH；请安装 SSH 客户端")?;
+        #[cfg(windows)]
+        let job = match crate::platform::OwnedJob::attach(child.id().unwrap_or(0)) {
+            Ok(job) => job,
+            Err(e) => {
+                let _ = child.kill().await;
+                return Err(format!("无法建立进程生命周期保护：{e}"));
+            }
+        };
+        let stderr = child.stderr.take().ok_or("无法读取 SSH 连接状态")?;
+        {
+            let mut d = self.data.lock().await;
+            match d.connections.get_mut(id) {
+                Some(c) if c.generation == generation => {
+                    c.view.pid = child.id();
+                    c.child = Some(child);
+                    #[cfg(windows)]
+                    {
+                        c.job = Some(job);
+                    }
+                }
+                _ => {
+                    drop(d);
+                    let _ = child.kill().await;
+                    return Ok(None);
+                }
+            }
+        }
+        let engine = self.clone();
+        let key = id.to_string();
+        Ok(Some(tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let line = line.chars().take(1200).collect::<String>();
+                let mut d = engine.data.lock().await;
+                if let Some(c) = d.connections.get_mut(&key) {
+                    if c.generation != generation || c.view.port != port {
+                        return;
+                    }
+                    if line
+                        == format!("debug1: Local forwarding listening on 127.0.0.1 port {port}.")
+                    {
+                        c.forward_ready = true;
+                    } else if !line.starts_with("debug") {
+                        c.port_conflict |= is_port_conflict(&line);
+                        c.view.error = explain_ssh(&line);
+                    }
+                }
+            }
+        })))
     }
     async fn connect(&self, id: String, generation: u64) {
         let connect_started = Instant::now();
@@ -322,6 +431,8 @@ impl Engine {
                 local
             }
         };
+        let mut stderr_task = None;
+        let mut bind_retries = 0;
         if direct {
             if !ready(&request.page_url(true)).await {
                 self.fail(
@@ -333,79 +444,17 @@ impl Engine {
                 return;
             }
         } else {
-            // Binding an unused loopback port is immediate; a refused TCP connect can be slow on Windows.
-            if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, request.port)).is_err() {
-                self.fail(
-                    &id,
-                    generation,
-                    "本地端口被其他进程占用；未接管或终止其他程序".into(),
-                )
-                .await;
-                return;
-            }
             if let Some(expected) = &request.fingerprint {
                 if let Err(e) = verify_known_host(&request, expected).await {
                     self.fail(&id, generation, e).await;
                     return;
                 }
             }
-            let mut cmd = command("ssh");
-            cmd.args(request.ssh_args())
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            let mut child = match cmd.spawn() {
-                Ok(p) => p,
-                Err(_) => {
-                    self.fail(
-                        &id,
-                        generation,
-                        "无法启动系统 OpenSSH；请安装 SSH 客户端".into(),
-                    )
-                    .await;
-                    return;
-                }
-            };
-            #[cfg(windows)]
-            let job = match crate::platform::OwnedJob::attach(child.id().unwrap_or(0)) {
-                Ok(job) => job,
+            match self.launch_tunnel(&id, generation, &request, false).await {
+                Ok(Some(task)) => stderr_task = Some(task),
+                Ok(None) => return,
                 Err(e) => {
-                    let _ = child.kill().await;
-                    self.fail(&id, generation, format!("无法建立进程生命周期保护：{e}"))
-                        .await;
-                    return;
-                }
-            };
-            if let Some(stderr) = child.stderr.take() {
-                let e = self.clone();
-                let key = id.clone();
-                tauri::async_runtime::spawn(async move {
-                    let mut lines = BufReader::new(stderr).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        let line = line.chars().take(1200).collect::<String>();
-                        let mut d = e.data.lock().await;
-                        if let Some(c) = d.connections.get_mut(&key) {
-                            if c.generation == generation {
-                                c.view.error = explain_ssh(&line);
-                            }
-                        }
-                    }
-                });
-            }
-            let mut d = self.data.lock().await;
-            match d.connections.get_mut(&id) {
-                Some(c) if c.generation == generation => {
-                    c.view.pid = child.id();
-                    c.child = Some(child);
-                    #[cfg(windows)]
-                    {
-                        c.job = Some(job);
-                    }
-                }
-                _ => {
-                    drop(d);
-                    let _ = child.kill().await;
+                    self.fail(&id, generation, e).await;
                     return;
                 }
             }
@@ -426,6 +475,42 @@ impl Engine {
             }
             if let Some(child) = c.child.as_mut() {
                 if matches!(child.try_wait(), Ok(Some(_))) {
+                    drop(d);
+                    if let Some(mut task) = stderr_task.take() {
+                        if tokio::time::timeout(Duration::from_secs(1), &mut task)
+                            .await
+                            .is_err()
+                        {
+                            task.abort();
+                        }
+                    }
+                    let mut d = self.data.lock().await;
+                    let Some(c) = d.connections.get_mut(&id) else {
+                        return;
+                    };
+                    if c.generation != generation {
+                        return;
+                    }
+                    c.child.take();
+                    #[cfg(windows)]
+                    {
+                        c.job.take();
+                    }
+                    c.view.pid = None;
+                    if c.port_conflict && !request.fixed_port && bind_retries < 3 {
+                        bind_retries += 1;
+                        c.view.status = "connecting".into();
+                        drop(d);
+                        match self.launch_tunnel(&id, generation, &request, true).await {
+                            Ok(Some(task)) => stderr_task = Some(task),
+                            Ok(None) => return,
+                            Err(e) => {
+                                self.fail(&id, generation, e).await;
+                                return;
+                            }
+                        }
+                        continue;
+                    }
                     c.view.status = "failed".into();
                     if c.view.error.is_empty() {
                         c.view.error = "SSH 进程已结束，请检查 Agent 授权与网络".into();
@@ -433,10 +518,11 @@ impl Engine {
                     return;
                 }
             }
-            let page = c.request.page_url(direct);
+            let page = c.effective_request().page_url(direct);
             let needs_open = !c.opened;
+            let forward_ready = direct || c.forward_ready;
             drop(d);
-            let responded = if needs_open { ready(&page).await } else { true };
+            let responded = forward_ready && (!needs_open || ready(&page).await);
             let mut d = self.data.lock().await;
             let Some(c) = d.connections.get_mut(&id) else {
                 return;
@@ -448,7 +534,7 @@ impl Engine {
             if responded {
                 c.view.status = if direct { "local" } else { "connected" }.into();
                 if !c.opened {
-                    match open_browser(&c.request, direct) {
+                    match open_browser(&c.effective_request(), direct) {
                         Ok(()) => {
                             c.opened = true;
                             c.view.error.clear();
@@ -482,6 +568,41 @@ impl Engine {
             .await;
         }
     }
+}
+impl Connection {
+    fn effective_request(&self) -> Request {
+        let mut request = self.request.clone();
+        request.port = self.view.port;
+        request
+    }
+}
+
+fn local_listener(preferred: u16, fixed: bool, reserved: &[u16]) -> Result<TcpListener, String> {
+    if preferred != 0 && !reserved.contains(&preferred) {
+        if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, preferred)) {
+            return Ok(listener);
+        }
+    }
+    if fixed {
+        return Err(format!(
+            "固定本机端口 {preferred} 已被占用或不可用，请释放端口后重试"
+        ));
+    }
+    for _ in 0..16 {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .map_err(|e| format!("无法分配空闲本机端口：{e}"))?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        if !reserved.contains(&port) {
+            return Ok(listener);
+        }
+    }
+    Err("暂时无法分配空闲本机端口，请重试".into())
+}
+
+fn is_port_conflict(line: &str) -> bool {
+    line.starts_with("bind [127.0.0.1]:")
+        || line.contains("Address already in use")
+        || line.contains("Only one usage of each socket address")
 }
 pub async fn agent_available() -> Result<(), String> {
     let output = tokio::time::timeout(
@@ -686,6 +807,89 @@ mod tests {
         assert_eq!(e.snapshot().await.len(), 1);
         let d = e.data.lock().await;
         assert_eq!(d.connections.values().next().unwrap().request.path, "/two");
+    }
+    #[tokio::test]
+    async fn reopening_original_link_keeps_allocated_port_and_current_path() {
+        let e = engine();
+        let original = request();
+        let id = original.key();
+        e.enqueue(original.clone()).await.unwrap();
+        {
+            let mut d = e.data.lock().await;
+            let c = d.connections.get_mut(&id).unwrap();
+            c.view.port = 49152;
+            c.view.status = "connected".into();
+        }
+        let mut repeated = original;
+        repeated.path = "/two".into();
+        repeated.port = 23456;
+        assert!(e.enqueue(repeated).await.unwrap().is_none());
+        let d = e.data.lock().await;
+        assert_eq!(d.connections.len(), 1);
+        let c = d.connections.get(&id).unwrap();
+        assert_eq!(
+            c.effective_request().page_url(false),
+            "http://127.0.0.1:49152/two"
+        );
+    }
+    #[tokio::test]
+    async fn simultaneous_requests_start_only_one_connection() {
+        let e = engine();
+        let (a, b) = tokio::join!(e.enqueue(request()), e.enqueue(request()));
+        assert_ne!(a.unwrap().is_some(), b.unwrap().is_some());
+        assert_eq!(e.snapshot().await.len(), 1);
+    }
+    #[tokio::test]
+    async fn changed_fingerprint_does_not_reuse_an_existing_connection() {
+        let e = engine();
+        e.enqueue(request()).await.unwrap();
+        let mut changed = request();
+        changed.fingerprint = Some("different".into());
+        assert!(e.enqueue(changed).await.is_err());
+    }
+    #[test]
+    fn occupied_port_selects_another_loopback_listener_and_preserves_owner() {
+        let occupied = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let selected = local_listener(port, false, &[]).unwrap();
+        assert_ne!(selected.local_addr().unwrap().port(), port);
+        assert!(selected.local_addr().unwrap().ip().is_loopback());
+        assert!(TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_err());
+        assert_eq!(occupied.local_addr().unwrap().port(), port);
+    }
+    #[test]
+    fn available_preferred_port_is_used() {
+        let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let selected = local_listener(port, false, &[]).unwrap();
+        assert_eq!(selected.local_addr().unwrap().port(), port);
+    }
+    #[test]
+    fn in_flight_port_is_not_reassigned() {
+        let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let selected = local_listener(port, false, &[port]).unwrap();
+        assert_ne!(selected.local_addr().unwrap().port(), port);
+    }
+    #[test]
+    fn fixed_port_conflict_does_not_silently_change_the_callback_origin() {
+        let occupied = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        assert!(local_listener(port, true, &[]).is_err());
+    }
+    #[test]
+    fn only_bind_errors_are_eligible_for_port_retry() {
+        assert!(is_port_conflict(
+            "bind [127.0.0.1]:18082: Address already in use"
+        ));
+        assert!(is_port_conflict(
+            "bind [127.0.0.1]:18082: Permission denied"
+        ));
+        assert!(!is_port_conflict("Permission denied (publickey)."));
+        assert!(!is_port_conflict("Host key verification failed."));
+        assert!(!is_port_conflict("agent refused operation"));
     }
     #[tokio::test]
     async fn disconnect_removes_and_renew_missing_fails() {

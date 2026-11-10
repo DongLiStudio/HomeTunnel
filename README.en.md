@@ -87,7 +87,8 @@ hometunnel://connect?host=server.example&user=alice&sshPort=22&port=18080&remote
 | `host` | Yes | Server hostname or IP |
 | `user` | Yes | SSH account |
 | `sshPort` | Yes | SSH port |
-| `port` | Yes | Local loopback listening port |
+| `port` | Yes | Preferred local loopback port; an available port is selected automatically if unavailable |
+| `fixedPort` | No | Defaults to `false`; `true` requires the requested port, for services with fixed local login callbacks |
 | `remotePort` | Yes | Remote loopback web-service port |
 | `name` | No | Display name; defaults to host |
 | `path` | No | Complete page path, optionally including a query; defaults to `/` |
@@ -116,7 +117,7 @@ Read the [security model](docs/security.md) and [installed-client acceptance che
 
 **An unknown or changed host key?** Verify server identity through a trusted channel before updating `known_hosts`. Do not bypass host verification.
 
-**A port conflict?** Check for an existing matching connection. If another application owns the port, choose a different local `port`; HomeTunnel will not terminate that application.
+**A port conflict?** Since 0.1.9, HomeTunnel automatically chooses an available port and opens the actual local address. Reopening the original link reuses the same target connection, even when its port changed. Bind races are retried up to three times. Unrelated listeners are left untouched, and the browser opens only after SSH confirms its own listener. Explicit `fixedPort=true` disables fallback for services with fixed OAuth callback addresses.
 
 **Does the web service still need authentication?** Yes. SSH controls tunnel access; the application controls accounts and operations. Retain application authentication for shared or privileged services.
 
